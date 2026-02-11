@@ -16,63 +16,101 @@ let rec free_vars (e : expr) : Vars.t =
     (* Your code goes here *)
     match e with
     | Num _ -> empty
-    | Binop (_, e1, e2) -> union (free_vars e1) (free_vars e2)
+    | Binop (_, lhs, rhs) -> union (free_vars lhs) (free_vars rhs)
     | Var x -> singleton x
-    | Lambda binder ->
-        let x, body = binder in
-        diff (free_vars body) (singleton x)
-    | App (e1, e2) -> union (free_vars e1) (free_vars e2)
-    | Let (e1, binder) ->
-        union (free_vars e1)
-            (let x, body = binder in
-            diff (free_vars body) (singleton x))
-    (* booleans *)
+    | Lambda (param, body) -> diff (free_vars body) (singleton param)
+    | App (fn, arg) -> union (free_vars fn) (free_vars arg)
+    | Let (e1, (param, body)) -> union (free_vars e1) (diff (free_vars body) (singleton param))
     | True -> empty
     | False -> empty 
-    | IfThenElse (e1, e2, e3) -> union (union (free_vars e1) (free_vars e2)) (free_vars e3) 
-    | Comp (_, e1, e2) -> union (free_vars e1) (free_vars e2)  
-    (* lists *)
+    | IfThenElse (cond, tt, ff) -> union (union (free_vars cond) (free_vars tt)) (free_vars ff) 
+    | Comp (_, lhs, rhs) -> union (free_vars lhs) (free_vars rhs)  
     | ListNil -> empty 
-    | ListCons (e1, e2) -> union (free_vars e1) (free_vars e2) 
-    | ListMatch (e1, e2, (x, (y, e3))) ->
-        let s1 = union (free_vars e1) (free_vars e2) in
-        let s2 = diff (diff (free_vars e3) (singleton x)) (singleton y) in
-        union s1 s2 
-    (* recursion *)
-    | Fix (x, e) -> diff (free_vars e) (singleton x) 
+    | ListCons (head, tail) -> union (free_vars head) (free_vars tail) 
+    | ListMatch (scrutinee, nil_case, (h, (t, cons_case))) ->
+        let scrutinee_vars = free_vars scrutinee in
+        let nil_vars = free_vars nil_case in
+        let cons_vars = diff (diff (free_vars cons_case) (singleton h)) (singleton t) in 
+        union (union scrutinee_vars nil_vars) cons_vars 
+    | Fix (self, body) -> diff (free_vars body) (singleton self) 
+    | _ -> im_stuck (Fmt.str "Unknown expression type: %a" Pretty.expr e)
 
 (** Perform substitution c[x -> e], i.e., substituting x with e in c *)
 let rec subst (x : string) (e : expr) (c : expr) : expr =
     match c with
     | Num n -> Num n
-    | Binop (op, c1, c2) -> Binop (op, subst x e c1, subst x e c2)
+    | Binop (binop, lhs, rhs) -> Binop (binop, subst x e lhs, subst x e rhs)
     | Var y -> if x = y then e else Var y
-    | Lambda binder ->
-        let y, body = binder in
-        Lambda (y, if String.equal x y then body else subst x e body )
-    | App (c1, c2) -> App (subst x e c1, subst x e c2)
-    | Let (c1, binder) ->
-        Let (subst x e c1,
-            let y, body = binder in
-            let body' = if String.equal x y then body else subst x e body in 
-            (y, body'))
-    (* booleans *)
-    | True -> empty
-    | False -> empty 
-    | IfThenElse (e1, e2, e3) -> union (union (free_vars e1) (free_vars e2)) (free_vars e3) 
-    | Comp (_, e1, e2) -> union (free_vars e1) (free_vars e2)  
-    (* lists *)
-    | ListNil -> empty 
-    | ListCons (e1, e2) -> union (free_vars e1) (free_vars e2) 
-    | ListMatch (e1, e2, (x, (y, e3))) ->
-        let s1 = union (free_vars e1) (free_vars e2) in
-        let s2 = diff (diff (free_vars e3) (singleton x)) (singleton y) in
-        union s1 s2 
-    (* recursion *)
-    | Fix (x, e) -> diff (free_vars e) (singleton x) 
+    | Lambda (param, body) ->
+        let body' = if String.equal x param then body else subst x e body in
+        Lambda (param, body')
+    | App (fn, arg) -> App (subst x e fn, subst x e arg)
+    | Let (c1, (param, body)) ->
+        let body' = if String.equal x param then body else subst x e body in 
+        Let (subst x e c1, (param, body'))
+    | True -> True 
+    | False -> False 
+    | IfThenElse (cond, tt, ff) -> IfThenElse (subst x e cond, subst x e tt, subst x e ff) 
+    | Comp (relop, lhs, rhs) -> Comp (relop, subst x e lhs, subst x e rhs) 
+    | ListNil -> ListNil 
+    | ListCons (head, tail) -> ListCons (subst x e head, subst x e tail) 
+    | ListMatch (scrutinee, nil_case, (h, (t, cons_case))) -> 
+        let cons_case' = 
+            if String.equal x h|| String.equal x t
+            then cons_case 
+            else subst x e cons_case 
+        in
+        ListMatch (subst x e scrutinee, subst x e nil_case, (h, (t, cons_case')))
+    | Fix (self, body) ->
+        let body' = if String.equal x self then body else subst x e body in 
+        Fix (self, body')    
+    | _ -> im_stuck (Fmt.str "Unknown expression type: %a" Pretty.expr e)
 
 (** Evaluate expression e *)
 let rec eval (e : expr) : expr =
-  try match e with _ -> todo ()
-  with Stuck msg ->
-    im_stuck (Fmt.str "%s\nin expression %a" msg Pretty.expr e)
+    try 
+        match e with   
+        | Num n -> Num n
+        | Binop (binop, lhs, rhs) -> 
+            let lhs' = eval lhs in
+            let rhs' = eval rhs in
+            (match lhs', rhs' with
+            | Num x, Num y -> 
+                (match binop with
+                | Add -> Num (x + y)
+                | Sub -> Num (x - y)
+                | Mul -> Num (x * y))
+            | _, _ -> im_stuck (Fmt.str "Invalid binop: %a" Pretty.expr e))
+        | Var _ -> im_stuck (Fmt.str "Unassigned: %a" Pretty.expr e) 
+        | Lambda binder -> Lambda binder 
+        | App (fn, arg) -> 
+            (match eval fn with
+            | Lambda (param, body) -> eval (subst param (eval arg) body) 
+            | _ -> im_stuck (Fmt.str "Application to non lambda: %a" Pretty.expr e))
+        | Let (e1, (param, body)) -> eval (subst param (eval e1) body)
+        | True -> True 
+        | False -> False 
+        | IfThenElse (cond, tt, ff) -> 
+            (match eval cond with
+            | True -> eval tt
+            | False -> eval ff
+            | _ -> im_stuck (Fmt.str "Non-bool in if statement: %a" Pretty.expr e))
+        | Comp (relop, lhs, rhs) -> 
+            (match eval lhs, eval rhs with
+            | Num x, Num y -> 
+                (match relop with
+                | Eq -> if x = y then True else False 
+                | Gt -> if x > y then True else False
+                | Lt -> if x < y then True else False)
+            | _, _ -> im_stuck (Fmt.str "Non-number operands to comparison: %a" Pretty.expr e))      
+        | ListNil -> ListNil 
+        | ListCons (head, tail) -> ListCons (eval head, eval tail)
+        | ListMatch (scrutinee, nil_case, (h, (t, cons_case))) -> 
+            (match eval scrutinee with
+            | ListNil -> eval nil_case
+            | ListCons (head, tail) -> eval (subst h head (subst t tail cons_case))
+            | _ -> im_stuck (Fmt.str "List error: %a" Pretty.expr e))
+        | Fix (self, body) -> eval (subst self (Fix (self, body)) e)
+        | _ -> im_stuck (Fmt.str "Ill-formed expression: %a" Pretty.expr e)
+    with Stuck msg ->
+        im_stuck (Fmt.str "%s\nin expression %a" msg Pretty.expr e)
