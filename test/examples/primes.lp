@@ -54,6 +54,6 @@ fun rec sieve with l =
 let primes = sieve (countfrom 2) in
 
 // the first 50 primes
-take primes 50
+take primes 20 
 
 // feel free to replace 50 with other numbers!

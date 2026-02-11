@@ -1,6 +1,6 @@
 open Ast
 
-let todo () = failwith "TODO"
+(* let todo () = failwith "TODO" *)
 
 exception Stuck of string
 (** Exception indicating that evaluation is stuck *)
@@ -20,7 +20,7 @@ let rec free_vars (e : expr) : Vars.t =
     | Var x -> singleton x
     | Lambda (param, body) -> diff (free_vars body) (singleton param)
     | App (fn, arg) -> union (free_vars fn) (free_vars arg)
-    | Let (e1, (param, body)) -> union (free_vars e1) (diff (free_vars body) (singleton param))
+    | Let (value, (name, expr)) -> union (free_vars value) (diff (free_vars expr) (singleton name))
     | True -> empty
     | False -> empty 
     | IfThenElse (cond, tt, ff) -> union (union (free_vars cond) (free_vars tt)) (free_vars ff) 
@@ -42,12 +42,18 @@ let rec subst (x : string) (e : expr) (c : expr) : expr =
     | Binop (binop, lhs, rhs) -> Binop (binop, subst x e lhs, subst x e rhs)
     | Var y -> if x = y then e else Var y
     | Lambda (param, body) ->
-        let body' = if String.equal x param then body else subst x e body in
+        let body' = 
+            if String.equal x param || Vars.mem param (free_vars e)
+            then body 
+            else subst x e body in
         Lambda (param, body')
     | App (fn, arg) -> App (subst x e fn, subst x e arg)
-    | Let (c1, (param, body)) ->
-        let body' = if String.equal x param then body else subst x e body in 
-        Let (subst x e c1, (param, body'))
+    | Let (value, (name, body)) ->
+        let body' = 
+            if String.equal x name || Vars.mem name (free_vars e) 
+            then body 
+            else subst x e body in 
+        Let (subst x e value, (name, body'))
     | True -> True 
     | False -> False 
     | IfThenElse (cond, tt, ff) -> IfThenElse (subst x e cond, subst x e tt, subst x e ff) 
@@ -55,12 +61,14 @@ let rec subst (x : string) (e : expr) (c : expr) : expr =
     | ListNil -> ListNil 
     | ListCons (head, tail) -> ListCons (subst x e head, subst x e tail) 
     | ListMatch (scrutinee, nil_case, (h, (t, cons_case))) -> 
+        let scrutinee' = subst x e scrutinee in
+        let nil_case' = subst x e nil_case in
         let cons_case' = 
-            if String.equal x h|| String.equal x t
+            if String.equal x h || String.equal x t
             then cons_case 
             else subst x e cons_case 
         in
-        ListMatch (subst x e scrutinee, subst x e nil_case, (h, (t, cons_case')))
+        ListMatch (scrutinee', nil_case', (h, (t, cons_case')))
     | Fix (self, body) ->
         let body' = if String.equal x self then body else subst x e body in 
         Fix (self, body')    
@@ -72,9 +80,7 @@ let rec eval (e : expr) : expr =
         match e with   
         | Num n -> Num n
         | Binop (binop, lhs, rhs) -> 
-            let lhs' = eval lhs in
-            let rhs' = eval rhs in
-            (match lhs', rhs' with
+            (match eval lhs, eval rhs with
             | Num x, Num y -> 
                 (match binop with
                 | Add -> Num (x + y)
@@ -87,7 +93,7 @@ let rec eval (e : expr) : expr =
             (match eval fn with
             | Lambda (param, body) -> eval (subst param (eval arg) body) 
             | _ -> im_stuck (Fmt.str "Application to non lambda: %a" Pretty.expr e))
-        | Let (e1, (param, body)) -> eval (subst param (eval e1) body)
+        | Let (value, (name, body)) -> eval (subst name (eval value) body)
         | True -> True 
         | False -> False 
         | IfThenElse (cond, tt, ff) -> 
@@ -110,7 +116,18 @@ let rec eval (e : expr) : expr =
             | ListNil -> eval nil_case
             | ListCons (head, tail) -> eval (subst h head (subst t tail cons_case))
             | _ -> im_stuck (Fmt.str "List error: %a" Pretty.expr e))
-        | Fix (self, body) -> eval (subst self (Fix (self, body)) e)
+        | Fix (self, body) -> eval (subst self (Fix (self, body)) body)
+        (* Some | None ? *)
+        | E1 e1 -> E1 (eval e1) 
+        | E2 e2 -> E2 (eval e2) 
+        | Either (e', (x, e1), (y, e2)) ->
+            (match eval e with
+            | E1 e1 -> 
+            | E2 e2 ->
+            | _ -> im_stuck (Fmt.str "Either on non-choice" Pretty.expr e))
+        | Both (e1, e2)
+        | I1 i1 ->
+        | I2 i2 -> 
         | _ -> im_stuck (Fmt.str "Ill-formed expression: %a" Pretty.expr e)
     with Stuck msg ->
         im_stuck (Fmt.str "%s\nin expression %a" msg Pretty.expr e)
