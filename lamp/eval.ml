@@ -1,6 +1,6 @@
 open Ast
 
-(* let todo () = failwith "TODO" *)
+let todo () = failwith "TODO"
 
 exception Stuck of string
 (** Exception indicating that evaluation is stuck *)
@@ -122,12 +122,12 @@ let rec eval (e : expr) : expr =
         | E2 e2 -> E2 (eval e2) 
         | Either (e', (x, e1), (y, e2)) ->
             (match eval e with
-            | E1 e1 -> 
-            | E2 e2 ->
-            | _ -> im_stuck (Fmt.str "Either on non-choice" Pretty.expr e))
-        | Both (e1, e2)
-        | I1 i1 ->
-        | I2 i2 -> 
+            | E1 e1 -> todo ()  
+            | E2 e2 -> todo ()
+            | _ -> im_stuck (Fmt.str "Either on non-choice: %a" Pretty.expr e))
+        | Both (i1, i2) -> todo ()
+        | I1 i1 -> todo ()
+        | I2 i2 -> todo ()
         | _ -> im_stuck (Fmt.str "Ill-formed expression: %a" Pretty.expr e)
     with Stuck msg ->
         im_stuck (Fmt.str "%s\nin expression %a" msg Pretty.expr e)
